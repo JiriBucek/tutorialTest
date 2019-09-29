@@ -7,27 +7,33 @@
 
 import Foundation
 import Vapor
+import Crypto
 
 
 struct UserController: RouteCollection {
     func boot(router: Router) throws {
-        let userRoure = router.grouped("api", "user")
-        userRoure.get(use: getAllHandler)
-        userRoure.post(User.self, use: createHandler)
-        userRoure.get(User.parameter, use: getHandler)
-        userRoure.get(User.parameter, "acronyms", use: getAcronymsHandler)
+        let usersRoute = router.grouped("api", "user")
+        usersRoute.get(use: getAllHandler)
+        usersRoute.post(User.self, use: createHandler)
+        usersRoute.get(User.parameter, use: getHandler)
+        usersRoute.get(User.parameter, "acronyms", use: getAcronymsHandler)
+        
+        let basicAuthMiddleware = User.basicAuthMiddleware(using: BCryptDigest())
+        let basicAuthGroup = usersRoute.grouped(basicAuthMiddleware)
+        basicAuthGroup.post("login", use: loginHandler)
     }
     
-    func getAllHandler(_ req: Request) throws -> Future<[User]> {
-        return User.query(on: req).all()
+    func getAllHandler(_ req: Request) throws -> Future<[User.Public]> {
+        return User.query(on: req).decode(data: User.Public.self).all()
     }
     
-    func createHandler(_ req: Request, user: User) throws -> Future<User> {
-        return user.save(on: req)
+    func createHandler(_ req: Request, user: User) throws -> Future<User.Public> {
+        user.password = try BCrypt.hash(user.password)
+        return user.save(on: req).convertToPublic()
     }
     
-    func getHandler(_ req: Request) throws -> Future<User> {
-        return try req.parameters.next(User.self)
+    func getHandler(_ req: Request) throws -> Future<User.Public> {
+        return try req.parameters.next(User.self).convertToPublic()
     }
     
     func getAcronymsHandler(_ req: Request) throws -> Future<[Acronym]> {
@@ -36,4 +42,9 @@ struct UserController: RouteCollection {
         }
     }
     
+    func loginHandler(_ req: Request) throws -> Future<Token> {
+        let user = try req.requireAuthenticated(User.self)
+        let token = try Token.generate(for: user)
+        return token.save(on: req)
+    }
 }
